@@ -1,9 +1,10 @@
 use glob::glob;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -52,6 +53,9 @@ pub fn scan_all() -> ScanResult {
             scan_kitty(&home),
             scan_sxhkd(&home),
             scan_tmux(&home),
+            scan_neovim(&home),
+            scan_dwm(&home),
+            scan_dwl(&home),
         ],
     }
 }
@@ -70,9 +74,65 @@ fn missing_source(id: &str, name: &str, kind: &str, scope: &str, path: &Path) ->
 }
 
 fn scan_hyprland(home: &Path) -> SourceScan {
-    let path = home.join(".config/hypr/hyprland.conf");
-    if !path.is_file() {
-        return missing_source("hyprland", "Hyprland", "compositor", "global", &path);
+    let lua_path = home.join(".config/hypr/hyprland.lua");
+    let conf_path = home.join(".config/hypr/hyprland.conf");
+    let path = if lua_path.is_file() {
+        lua_path
+    } else if conf_path.is_file() {
+        conf_path
+    } else {
+        return missing_source("hyprland", "Hyprland", "compositor", "global", &conf_path);
+    };
+
+    if env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
+        if let Ok(output) = Command::new("hyprctl").args(["binds", "-j"]).output() {
+            if output.status.success() {
+                match parse_hyprctl_bindings(&output.stdout, &path) {
+                    Ok(bindings) => {
+                        return SourceScan {
+                            id: "hyprland".into(),
+                            name: "Hyprland".into(),
+                            kind: "compositor".into(),
+                            scope: "global".into(),
+                            status: status_for(&bindings, &[]),
+                            config_paths: vec![path.display().to_string()],
+                            bindings,
+                            warnings: vec![],
+                        };
+                    }
+                    Err(error) => {
+                        return SourceScan {
+                            id: "hyprland".into(),
+                            name: "Hyprland".into(),
+                            kind: "compositor".into(),
+                            scope: "global".into(),
+                            status: "warning".into(),
+                            config_paths: vec![path.display().to_string()],
+                            bindings: vec![],
+                            warnings: vec![format!(
+                                "Could not decode live Hyprland bindings: {error}"
+                            )],
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    if path.extension().is_some_and(|extension| extension == "lua") {
+        return SourceScan {
+            id: "hyprland".into(),
+            name: "Hyprland".into(),
+            kind: "compositor".into(),
+            scope: "global".into(),
+            status: "warning".into(),
+            config_paths: vec![path.display().to_string()],
+            bindings: vec![],
+            warnings: vec![
+                "Lua config found; launch Keyventory inside Hyprland to read evaluated bindings"
+                    .into(),
+            ],
+        };
     }
 
     let mut bindings = vec![];
@@ -100,6 +160,70 @@ fn scan_hyprland(home: &Path) -> SourceScan {
         bindings,
         warnings,
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct HyprctlBinding {
+    #[serde(default)]
+    modmask: u32,
+    #[serde(default)]
+    key: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    submap: String,
+}
+
+fn parse_hyprctl_bindings(bytes: &[u8], source_path: &Path) -> serde_json::Result<Vec<Binding>> {
+    let raw: Vec<HyprctlBinding> = serde_json::from_slice(bytes)?;
+    Ok(raw
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, raw)| {
+            let key = canonical_key(&raw.key);
+            if key.is_empty() {
+                return None;
+            }
+            let mut binding = binding(
+                ("hyprland", "Hyprland"),
+                (
+                    "global",
+                    if raw.submap.is_empty() {
+                        "default"
+                    } else {
+                        &raw.submap
+                    },
+                ),
+                (hyprland_modifiers(raw.modmask), key),
+                if raw.description.is_empty() {
+                    "Hyprland binding".into()
+                } else {
+                    raw.description
+                },
+                (source_path, 0),
+                false,
+            );
+            binding.id = format!("hyprland:live:{index}");
+            Some(binding)
+        })
+        .collect())
+}
+
+fn hyprland_modifiers(mask: u32) -> Vec<String> {
+    let mut modifiers = vec![];
+    if mask & 64 != 0 {
+        modifiers.push("Super".into());
+    }
+    if mask & 4 != 0 {
+        modifiers.push("Ctrl".into());
+    }
+    if mask & 8 != 0 {
+        modifiers.push("Alt".into());
+    }
+    if mask & 1 != 0 {
+        modifiers.push("Shift".into());
+    }
+    modifiers
 }
 
 fn parse_hyprland_file(
@@ -434,6 +558,426 @@ fn scan_tmux(home: &Path) -> SourceScan {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct NeovimBinding {
+    mode: String,
+    lhs: String,
+    #[serde(default)]
+    rhs: String,
+    #[serde(default)]
+    desc: String,
+}
+
+fn scan_neovim(home: &Path) -> SourceScan {
+    let candidates = [
+        home.join(".config/nvim/init.lua"),
+        home.join(".config/nvim/init.vim"),
+        home.join(".vimrc"),
+    ];
+    let Some(path) = candidates.iter().find(|path| path.is_file()) else {
+        return missing_source("neovim", "Neovim", "editor", "application", &candidates[0]);
+    };
+
+    let lua = r#"local out={}; for _,mode in ipairs({'n','i','v','x','s','o','t','c'}) do for _,m in ipairs(vim.api.nvim_get_keymap(mode)) do table.insert(out,{mode=mode,lhs=m.lhs,rhs=m.rhs or '',desc=m.desc or ''}) end end; io.stdout:write('KEYVENTORY_JSON:'..vim.json.encode(out))"#;
+    let output = Command::new("nvim")
+        .args([
+            "--headless",
+            "-i",
+            "NONE",
+            "--cmd",
+            "set shortmess+=I",
+            "-c",
+            &format!("lua {lua}"),
+            "-c",
+            "qa!",
+        ])
+        .output();
+
+    let Ok(output) = output else {
+        return source_warning(
+            "neovim",
+            "Neovim",
+            "editor",
+            "application",
+            path,
+            "Neovim config found, but the nvim executable could not be started",
+        );
+    };
+    if !output.status.success() {
+        return source_warning(
+            "neovim",
+            "Neovim",
+            "editor",
+            "application",
+            path,
+            "Neovim config did not finish loading in headless mode",
+        );
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let Some(json) = stdout.split("KEYVENTORY_JSON:").nth(1) else {
+        return source_warning(
+            "neovim",
+            "Neovim",
+            "editor",
+            "application",
+            path,
+            "Neovim returned no keymap data",
+        );
+    };
+    let Ok(raw_bindings) = serde_json::from_str::<Vec<NeovimBinding>>(json.trim()) else {
+        return source_warning(
+            "neovim",
+            "Neovim",
+            "editor",
+            "application",
+            path,
+            "Neovim returned keymap data Keyventory could not decode",
+        );
+    };
+
+    let bindings = raw_bindings
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, raw)| {
+            let (modifiers, key, sequence) = parse_neovim_chord(&raw.lhs)?;
+            let mut action = if !raw.desc.is_empty() {
+                raw.desc
+            } else if !raw.rhs.is_empty() {
+                raw.rhs
+            } else {
+                "Lua callback".into()
+            };
+            if sequence {
+                action.push_str(&format!(" · sequence {}", raw.lhs));
+            }
+            let mut binding = binding(
+                ("neovim", "Neovim"),
+                ("application", neovim_mode_name(&raw.mode)),
+                (modifiers, key),
+                action,
+                (path, 0),
+                false,
+            );
+            binding.id = format!("neovim:runtime:{index}");
+            Some(binding)
+        })
+        .collect::<Vec<_>>();
+
+    SourceScan {
+        id: "neovim".into(),
+        name: "Neovim".into(),
+        kind: "editor".into(),
+        scope: "application".into(),
+        status: status_for(&bindings, &[]),
+        config_paths: vec![path.display().to_string()],
+        bindings,
+        warnings: vec![],
+    }
+}
+
+fn source_warning(
+    id: &str,
+    name: &str,
+    kind: &str,
+    scope: &str,
+    path: &Path,
+    warning: &str,
+) -> SourceScan {
+    SourceScan {
+        id: id.into(),
+        name: name.into(),
+        kind: kind.into(),
+        scope: scope.into(),
+        status: "warning".into(),
+        config_paths: vec![path.display().to_string()],
+        bindings: vec![],
+        warnings: vec![warning.into()],
+    }
+}
+
+fn neovim_mode_name(mode: &str) -> &str {
+    match mode {
+        "n" => "normal",
+        "i" => "insert",
+        "v" | "x" => "visual",
+        "s" => "select",
+        "o" => "operator-pending",
+        "t" => "terminal",
+        "c" => "command-line",
+        _ => mode,
+    }
+}
+
+fn parse_neovim_chord(lhs: &str) -> Option<(Vec<String>, String, bool)> {
+    let lhs = lhs.trim_matches('\0');
+    if lhs.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = lhs.strip_prefix('<') {
+        let end = rest.find('>')?;
+        let mut token = &rest[..end];
+        let sequence = end + 2 < lhs.len();
+        let mut modifiers = vec![];
+        loop {
+            let upper = token.to_ascii_uppercase();
+            let (modifier, tail) = if upper.starts_with("C-") {
+                (Some("Ctrl"), &token[2..])
+            } else if upper.starts_with("A-") || upper.starts_with("M-") {
+                (Some("Alt"), &token[2..])
+            } else if upper.starts_with("S-") {
+                (Some("Shift"), &token[2..])
+            } else if upper.starts_with("D-") {
+                (Some("Super"), &token[2..])
+            } else {
+                (None, token)
+            };
+            let Some(modifier) = modifier else {
+                break;
+            };
+            modifiers.push(modifier.into());
+            token = tail;
+        }
+        let key = match token.to_ascii_uppercase().as_str() {
+            "LEADER" | "LOCALLEADER" | "SPACE" => "SPACE".into(),
+            "CR" => "ENTER".into(),
+            "LT" => "COMMA".into(),
+            _ => canonical_key(token),
+        };
+        if key.is_empty() {
+            return None;
+        }
+        sort_modifiers(&mut modifiers);
+        return Some((modifiers, key, sequence));
+    }
+
+    let first = lhs.chars().next()?;
+    let sequence = first.len_utf8() < lhs.len();
+    let (mut modifiers, key) = neovim_literal_key(first);
+    sort_modifiers(&mut modifiers);
+    Some((modifiers, key, sequence))
+}
+
+fn neovim_literal_key(key: char) -> (Vec<String>, String) {
+    let shifted = match key {
+        '~' => Some("GRAVE"),
+        '!' => Some("1"),
+        '@' => Some("2"),
+        '#' => Some("3"),
+        '$' => Some("4"),
+        '%' => Some("5"),
+        '^' => Some("6"),
+        '&' => Some("7"),
+        '*' => Some("8"),
+        '(' => Some("9"),
+        ')' => Some("0"),
+        '_' => Some("MINUS"),
+        '+' => Some("EQUAL"),
+        '{' => Some("BRACKETLEFT"),
+        '}' => Some("BRACKETRIGHT"),
+        '|' => Some("BACKSLASH"),
+        ':' => Some("SEMICOLON"),
+        '"' => Some("APOSTROPHE"),
+        '<' => Some("COMMA"),
+        '>' => Some("PERIOD"),
+        '?' => Some("SLASH"),
+        _ => None,
+    };
+    if let Some(key) = shifted {
+        return (vec!["Shift".into()], key.into());
+    }
+    if key.is_ascii_uppercase() {
+        return (vec!["Shift".into()], key.to_string());
+    }
+    (vec![], canonical_key(&key.to_string()))
+}
+
+fn scan_dwm(home: &Path) -> SourceScan {
+    scan_c_window_manager(home, "dwm", "dwm", "X11 window manager", "XK_")
+}
+
+fn scan_dwl(home: &Path) -> SourceScan {
+    scan_c_window_manager(home, "dwl", "dwl", "Wayland compositor", "XKB_KEY_")
+}
+
+fn scan_c_window_manager(
+    home: &Path,
+    id: &str,
+    name: &str,
+    kind: &str,
+    key_prefix: &str,
+) -> SourceScan {
+    let candidates = [
+        home.join(format!(".config/{id}/config.h")),
+        home.join(format!(".config/{id}/config.def.h")),
+        home.join(format!("src/{id}/config.h")),
+        home.join(format!("src/{id}/config.def.h")),
+    ];
+    let Some(path) = candidates.iter().find(|path| path.is_file()) else {
+        return missing_source(id, name, kind, "global", &candidates[0]);
+    };
+    let Ok(text) = fs::read_to_string(path) else {
+        return source_warning(
+            id,
+            name,
+            kind,
+            "global",
+            path,
+            "Config file could not be read",
+        );
+    };
+    let modkey = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("#define MODKEY "))
+        .unwrap_or("Mod4Mask");
+    let mut bindings = vec![];
+    let mut in_keys = false;
+    let mut in_block_comment = false;
+
+    for (index, original) in text.lines().enumerate() {
+        let line_number = index + 1;
+        let line = strip_c_comments(original, &mut in_block_comment);
+        let line = line.trim();
+        if !in_keys {
+            in_keys = line.contains("Key keys[]") && line.contains('{');
+            continue;
+        }
+        if line.starts_with("};") {
+            break;
+        }
+        if let Some(arguments) = line.strip_prefix("TAGKEYS(") {
+            let arguments = arguments.trim_end_matches([',', ')']).trim();
+            let fields = split_c_fields(arguments);
+            if let Some(raw_key) = fields.first() {
+                let key = canonical_c_key(raw_key, key_prefix);
+                for (suffix, action, extra_modifiers) in [
+                    ("view", "view tag", vec![]),
+                    ("toggleview", "toggle tag view", vec!["Ctrl"]),
+                    ("tag", "move client to tag", vec!["Shift"]),
+                    ("toggletag", "toggle client tag", vec!["Ctrl", "Shift"]),
+                ] {
+                    let mut modifiers = parse_c_modifiers("MODKEY", modkey);
+                    modifiers.extend(extra_modifiers.into_iter().map(str::to_string));
+                    sort_modifiers(&mut modifiers);
+                    let mut item = binding(
+                        (id, name),
+                        ("global", "tags"),
+                        (modifiers, key.clone()),
+                        action.into(),
+                        (path, line_number),
+                        true,
+                    );
+                    item.id.push_str(&format!(":{suffix}"));
+                    bindings.push(item);
+                }
+            }
+            continue;
+        }
+        let Some(row) = line.strip_prefix('{') else {
+            continue;
+        };
+        let fields = split_c_fields(row);
+        if fields.len() < 3 {
+            continue;
+        }
+        let key = canonical_c_key(fields[1], key_prefix);
+        if key.is_empty() {
+            continue;
+        }
+        bindings.push(binding(
+            (id, name),
+            ("global", "keys"),
+            (parse_c_modifiers(fields[0], modkey), key),
+            fields[2].trim().to_string(),
+            (path, line_number),
+            true,
+        ));
+    }
+
+    SourceScan {
+        id: id.into(),
+        name: name.into(),
+        kind: kind.into(),
+        scope: "global".into(),
+        status: status_for(&bindings, &[]),
+        config_paths: vec![path.display().to_string()],
+        bindings,
+        warnings: vec![],
+    }
+}
+
+fn strip_c_comments<'a>(line: &'a str, in_block_comment: &mut bool) -> &'a str {
+    if *in_block_comment {
+        if let Some((_, tail)) = line.split_once("*/") {
+            *in_block_comment = false;
+            return tail;
+        }
+        return "";
+    }
+    let line = line.split_once("//").map_or(line, |(content, _)| content);
+    if let Some((content, _)) = line.split_once("/*") {
+        *in_block_comment = !line.contains("*/");
+        content
+    } else {
+        line
+    }
+}
+
+fn split_c_fields(row: &str) -> Vec<&str> {
+    let mut fields = vec![];
+    let mut start = 0;
+    let mut depth = 0_i32;
+    let mut quote = None;
+    for (index, character) in row.char_indices() {
+        if let Some(active_quote) = quote {
+            if character == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '"' | '\'' => quote = Some(character),
+            '(' | '{' | '[' => depth += 1,
+            ')' | '}' | ']' => depth -= 1,
+            ',' if depth <= 0 => {
+                fields.push(row[start..index].trim());
+                start = index + 1;
+                if fields.len() == 3 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    if fields.len() < 3 && start < row.len() {
+        fields.push(row[start..].trim());
+    }
+    fields
+}
+
+fn parse_c_modifiers(raw: &str, modkey: &str) -> Vec<String> {
+    let mut modifiers = vec![];
+    let expanded = raw.replace("MODKEY", modkey);
+    if expanded.contains("Mod4Mask") || expanded.contains("WLR_MODIFIER_LOGO") {
+        modifiers.push("Super".into());
+    }
+    if expanded.contains("ControlMask") || expanded.contains("WLR_MODIFIER_CTRL") {
+        modifiers.push("Ctrl".into());
+    }
+    if expanded.contains("Mod1Mask") || expanded.contains("WLR_MODIFIER_ALT") {
+        modifiers.push("Alt".into());
+    }
+    if expanded.contains("ShiftMask") || expanded.contains("WLR_MODIFIER_SHIFT") {
+        modifiers.push("Shift".into());
+    }
+    sort_modifiers(&mut modifiers);
+    modifiers
+}
+
+fn canonical_c_key(raw: &str, prefix: &str) -> String {
+    canonical_key(raw.trim().trim_start_matches(prefix))
+}
+
 fn binding(
     source: (&str, &str),
     scope_context: (&str, &str),
@@ -662,6 +1206,60 @@ mod tests {
         assert_eq!(bindings[0].modifiers, vec!["Super", "Shift"]);
         assert_eq!(bindings[1].action, "Open terminal");
         assert!(warnings.is_empty());
+        fs::remove_dir_all(&root).expect("fixture directory should be removed");
+    }
+
+    #[test]
+    fn decodes_live_hyprland_lua_bindings() {
+        let json = br#"[{"modmask":65,"key":"Return","description":"Open terminal","submap":""}]"#;
+        let bindings = parse_hyprctl_bindings(json, Path::new("/tmp/hyprland.lua"))
+            .expect("hyprctl fixture should decode");
+
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].modifiers, vec!["Super", "Shift"]);
+        assert_eq!(bindings[0].key, "ENTER");
+        assert_eq!(bindings[0].action, "Open terminal");
+        assert!(!bindings[0].editable);
+    }
+
+    #[test]
+    fn parses_neovim_keys_and_sequences() {
+        assert_eq!(
+            parse_neovim_chord("<C-S-Left>"),
+            Some((vec!["Ctrl".into(), "Shift".into()], "LEFT".into(), false))
+        );
+        assert_eq!(
+            parse_neovim_chord("<Space>p"),
+            Some((vec![], "SPACE".into(), true))
+        );
+        assert_eq!(
+            parse_neovim_chord(":"),
+            Some((vec!["Shift".into()], "SEMICOLON".into(), false))
+        );
+    }
+
+    #[test]
+    fn parses_dwm_rows_and_tag_macros() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should follow the Unix epoch")
+            .as_nanos();
+        let root = env::temp_dir().join(format!("keyventory-dwm-{}-{nonce}", std::process::id()));
+        let config_dir = root.join("src/dwm");
+        fs::create_dir_all(&config_dir).expect("fixture directory should be created");
+        fs::write(
+            config_dir.join("config.def.h"),
+            "#define MODKEY Mod4Mask\nstatic Key keys[] = {\n\
+             { MODKEY|ShiftMask, XK_Return, spawn, {0} },\n\
+             TAGKEYS(XK_q, 0)\n};\n",
+        )
+        .expect("dwm fixture should be written");
+
+        let source = scan_dwm(&root);
+        assert_eq!(source.bindings.len(), 5);
+        assert_eq!(source.bindings[0].modifiers, vec!["Super", "Shift"]);
+        assert_eq!(source.bindings[0].key, "ENTER");
+        assert_eq!(source.bindings[1].action, "view tag");
         fs::remove_dir_all(&root).expect("fixture directory should be removed");
     }
 }
