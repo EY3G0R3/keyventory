@@ -132,21 +132,40 @@ function App() {
   useEffect(() => { void scan(); }, [scan]);
 
   useEffect(() => {
-    const syncHeldModifiers = (event: KeyboardEvent) => {
-      setActiveModifiers([
-        event.metaKey ? "Super" : "",
-        event.ctrlKey ? "Ctrl" : "",
-        event.altKey ? "Alt" : "",
-        event.shiftKey ? "Shift" : "",
-      ].filter(Boolean));
+    const heldKeys = new Map<string, string>();
+    const modifierFor = (event: KeyboardEvent) => {
+      if (event.key === "Meta" || event.key === "OS" || event.key === "Super") return "Super";
+      if (event.key === "Control") return "Ctrl";
+      if (event.key === "Alt" || event.key === "AltGraph") return "Alt";
+      if (event.key === "Shift") return "Shift";
+      return null;
     };
-    const clearHeldModifiers = () => setActiveModifiers([]);
-    window.addEventListener("keydown", syncHeldModifiers);
-    window.addEventListener("keyup", syncHeldModifiers);
+    const showHeldModifiers = () => {
+      const heldModifiers = new Set(heldKeys.values());
+      setActiveModifiers(MODIFIER_ORDER.filter((modifier) => heldModifiers.has(modifier)));
+    };
+    const pressModifier = (event: KeyboardEvent) => {
+      const modifier = modifierFor(event);
+      if (!modifier) return;
+      heldKeys.set(event.code || event.key, modifier);
+      showHeldModifiers();
+    };
+    const releaseModifier = (event: KeyboardEvent) => {
+      const modifier = modifierFor(event);
+      if (!modifier) return;
+      heldKeys.delete(event.code || event.key);
+      showHeldModifiers();
+    };
+    const clearHeldModifiers = () => {
+      heldKeys.clear();
+      setActiveModifiers([]);
+    };
+    window.addEventListener("keydown", pressModifier);
+    window.addEventListener("keyup", releaseModifier);
     window.addEventListener("blur", clearHeldModifiers);
     return () => {
-      window.removeEventListener("keydown", syncHeldModifiers);
-      window.removeEventListener("keyup", syncHeldModifiers);
+      window.removeEventListener("keydown", pressModifier);
+      window.removeEventListener("keyup", releaseModifier);
       window.removeEventListener("blur", clearHeldModifiers);
     };
   }, []);
