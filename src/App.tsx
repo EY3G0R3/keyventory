@@ -138,7 +138,7 @@ function App() {
   useEffect(() => { void scan(); }, [scan]);
 
   useEffect(() => {
-    let keyboardLayerActive = false;
+    const heldModifiers = new Set<string>();
     const modifierFor = (event: KeyboardEvent) => {
       const identity = `${event.key} ${event.code}`.toLowerCase();
       if (identity.includes("meta") || identity.includes("super") || identity.startsWith("os ")) return "Super";
@@ -159,31 +159,24 @@ function App() {
       setActiveModifiers(MODIFIER_ORDER.filter((modifier) => heldModifiers.has(modifier)));
     };
     const syncHeldModifiers = (event: KeyboardEvent) => {
-      const heldModifiers = modifiersFrom(event);
+      for (const reportedModifier of modifiersFrom(event)) {
+        heldModifiers.add(reportedModifier);
+      }
       const changedModifier = modifierFor(event);
       if (event.type === "keydown" && changedModifier) heldModifiers.add(changedModifier);
       if (event.type === "keyup" && changedModifier) heldModifiers.delete(changedModifier);
-      keyboardLayerActive = heldModifiers.size > 0;
-      showModifiers(heldModifiers);
-    };
-    const reconcilePointerModifiers = (event: PointerEvent) => {
-      if (!keyboardLayerActive) return;
-      const heldModifiers = modifiersFrom(event);
-      keyboardLayerActive = heldModifiers.size > 0;
       showModifiers(heldModifiers);
     };
     const clearHeldModifiers = () => {
-      keyboardLayerActive = false;
+      heldModifiers.clear();
       setActiveModifiers([]);
     };
     window.addEventListener("keydown", syncHeldModifiers);
     window.addEventListener("keyup", syncHeldModifiers);
-    window.addEventListener("pointermove", reconcilePointerModifiers);
     window.addEventListener("blur", clearHeldModifiers);
     return () => {
       window.removeEventListener("keydown", syncHeldModifiers);
       window.removeEventListener("keyup", syncHeldModifiers);
-      window.removeEventListener("pointermove", reconcilePointerModifiers);
       window.removeEventListener("blur", clearHeldModifiers);
     };
   }, []);
