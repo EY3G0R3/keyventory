@@ -138,33 +138,52 @@ function App() {
   useEffect(() => { void scan(); }, [scan]);
 
   useEffect(() => {
+    let keyboardLayerActive = false;
     const modifierFor = (event: KeyboardEvent) => {
-      if (event.key === "Meta" || event.key === "OS" || event.key === "Super") return "Super";
-      if (event.key === "Control") return "Ctrl";
-      if (event.key === "Alt" || event.key === "AltGraph") return "Alt";
-      if (event.key === "Shift") return "Shift";
+      const identity = `${event.key} ${event.code}`.toLowerCase();
+      if (identity.includes("meta") || identity.includes("super") || identity.startsWith("os ")) return "Super";
+      if (identity.includes("control") || identity.includes("ctrl")) return "Ctrl";
+      if (identity.includes("alt")) return "Alt";
+      if (identity.includes("shift")) return "Shift";
       return null;
     };
-    const syncHeldModifiers = (event: KeyboardEvent) => {
+    const modifiersFrom = (event: Pick<KeyboardEvent, "metaKey" | "ctrlKey" | "altKey" | "shiftKey">) => {
       const heldModifiers = new Set<string>();
       if (event.metaKey) heldModifiers.add("Super");
       if (event.ctrlKey) heldModifiers.add("Ctrl");
       if (event.altKey) heldModifiers.add("Alt");
       if (event.shiftKey) heldModifiers.add("Shift");
-
-      if (event.type === "keyup") {
-        const releasedModifier = modifierFor(event);
-        if (releasedModifier) heldModifiers.delete(releasedModifier);
-      }
+      return heldModifiers;
+    };
+    const showModifiers = (heldModifiers: Set<string>) => {
       setActiveModifiers(MODIFIER_ORDER.filter((modifier) => heldModifiers.has(modifier)));
     };
-    const clearHeldModifiers = () => setActiveModifiers([]);
+    const syncHeldModifiers = (event: KeyboardEvent) => {
+      const heldModifiers = modifiersFrom(event);
+      const changedModifier = modifierFor(event);
+      if (event.type === "keydown" && changedModifier) heldModifiers.add(changedModifier);
+      if (event.type === "keyup" && changedModifier) heldModifiers.delete(changedModifier);
+      keyboardLayerActive = heldModifiers.size > 0;
+      showModifiers(heldModifiers);
+    };
+    const reconcilePointerModifiers = (event: PointerEvent) => {
+      if (!keyboardLayerActive) return;
+      const heldModifiers = modifiersFrom(event);
+      keyboardLayerActive = heldModifiers.size > 0;
+      showModifiers(heldModifiers);
+    };
+    const clearHeldModifiers = () => {
+      keyboardLayerActive = false;
+      setActiveModifiers([]);
+    };
     window.addEventListener("keydown", syncHeldModifiers);
     window.addEventListener("keyup", syncHeldModifiers);
+    window.addEventListener("pointermove", reconcilePointerModifiers);
     window.addEventListener("blur", clearHeldModifiers);
     return () => {
       window.removeEventListener("keydown", syncHeldModifiers);
       window.removeEventListener("keyup", syncHeldModifiers);
+      window.removeEventListener("pointermove", reconcilePointerModifiers);
       window.removeEventListener("blur", clearHeldModifiers);
     };
   }, []);
