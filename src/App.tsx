@@ -132,7 +132,6 @@ function App() {
   useEffect(() => { void scan(); }, [scan]);
 
   useEffect(() => {
-    const heldKeys = new Map<string, string>();
     const modifierFor = (event: KeyboardEvent) => {
       if (event.key === "Meta" || event.key === "OS" || event.key === "Super") return "Super";
       if (event.key === "Control") return "Ctrl";
@@ -140,32 +139,26 @@ function App() {
       if (event.key === "Shift") return "Shift";
       return null;
     };
-    const showHeldModifiers = () => {
-      const heldModifiers = new Set(heldKeys.values());
+    const syncHeldModifiers = (event: KeyboardEvent) => {
+      const heldModifiers = new Set<string>();
+      if (event.metaKey) heldModifiers.add("Super");
+      if (event.ctrlKey) heldModifiers.add("Ctrl");
+      if (event.altKey) heldModifiers.add("Alt");
+      if (event.shiftKey) heldModifiers.add("Shift");
+
+      if (event.type === "keyup") {
+        const releasedModifier = modifierFor(event);
+        if (releasedModifier) heldModifiers.delete(releasedModifier);
+      }
       setActiveModifiers(MODIFIER_ORDER.filter((modifier) => heldModifiers.has(modifier)));
     };
-    const pressModifier = (event: KeyboardEvent) => {
-      const modifier = modifierFor(event);
-      if (!modifier) return;
-      heldKeys.set(event.code || event.key, modifier);
-      showHeldModifiers();
-    };
-    const releaseModifier = (event: KeyboardEvent) => {
-      const modifier = modifierFor(event);
-      if (!modifier) return;
-      heldKeys.delete(event.code || event.key);
-      showHeldModifiers();
-    };
-    const clearHeldModifiers = () => {
-      heldKeys.clear();
-      setActiveModifiers([]);
-    };
-    window.addEventListener("keydown", pressModifier);
-    window.addEventListener("keyup", releaseModifier);
+    const clearHeldModifiers = () => setActiveModifiers([]);
+    window.addEventListener("keydown", syncHeldModifiers);
+    window.addEventListener("keyup", syncHeldModifiers);
     window.addEventListener("blur", clearHeldModifiers);
     return () => {
-      window.removeEventListener("keydown", pressModifier);
-      window.removeEventListener("keyup", releaseModifier);
+      window.removeEventListener("keydown", syncHeldModifiers);
+      window.removeEventListener("keyup", syncHeldModifiers);
       window.removeEventListener("blur", clearHeldModifiers);
     };
   }, []);
