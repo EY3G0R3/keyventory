@@ -37,7 +37,9 @@ button { color: inherit; }
 .panel-heading strong { font-size: 13px; }
 .eyebrow { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .13em; font-weight: 700; }
 .text-button { background: none; border: 0; color: var(--lime); font-size: 12px; cursor: pointer; }
-.source-list { display: flex; flex-direction: column; gap: 7px; }
+.source-list { display: flex; flex-direction: column; gap: 14px; }
+.source-group { display: flex; flex-direction: column; gap: 7px; padding-top: 14px; border-top: 1px solid #252b31; }
+.source-group:first-child { padding-top: 0; border-top: 0; }
 .source-card { width: 100%; border: 1px solid transparent; background: transparent; border-radius: 10px; padding: 10px; display: grid; grid-template-columns: 36px 1fr 30px; gap: 10px; align-items: center; text-align: left; cursor: pointer; opacity: .62; }
 .source-card:hover:not(:disabled) { background: #1a1e23; opacity: .9; }
 .source-card.is-enabled { opacity: 1; background: color-mix(in srgb, var(--source-color) 8%, #171b1f); border-color: color-mix(in srgb, var(--source-color) 30%, #343d35); }

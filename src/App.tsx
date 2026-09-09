@@ -31,6 +31,12 @@ type ScanResult = { sources: SourceScan[] };
 type KeyDef = { code: string; label: string; width?: number };
 
 const MODIFIER_ORDER = ["Super", "Ctrl", "Alt", "Shift"];
+const SOURCE_GROUPS = [
+  ["hyprland", "sxhkd"],
+  ["dwm", "dwl"],
+  ["kitty", "tmux"],
+  ["neovim"],
+];
 const SOURCE_COLORS: Record<string, string> = {
   hyprland: "#b6d96c",
   kitty: "#e6a15a",
@@ -167,6 +173,15 @@ function App() {
     () => sources.flatMap((source) => enabledSources.has(source.id) ? source.bindings : []),
     [sources, enabledSources],
   );
+  const groupedSources = useMemo(() => {
+    const sourcesById = new Map(sources.map((source) => [source.id, source]));
+    const groupedIds = new Set(SOURCE_GROUPS.flat());
+    const groups = SOURCE_GROUPS
+      .map((group) => group.flatMap((sourceId) => sourcesById.get(sourceId) ?? []))
+      .filter((group) => group.length > 0);
+    const ungrouped = sources.filter((source) => !groupedIds.has(source.id));
+    return ungrouped.length ? [...groups, ungrouped] : groups;
+  }, [sources]);
   const visibleBindings = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return selectedBindings;
@@ -228,23 +243,27 @@ function App() {
             <button className="text-button" onClick={() => setEnabledSources(new Set(sources.filter((source) => source.status !== "missing").map((source) => source.id)))}>All</button>
           </div>
           <div className="source-list">
-            {sources.map((source) => {
-              const enabled = enabledSources.has(source.id);
-              return (
-                <button
-                  key={source.id}
-                  className={`source-card ${enabled ? "is-enabled" : ""} is-${source.status}`}
-                  style={{ "--source-color": sourceColor(source.id) } as CSSProperties}
-                  onClick={() => source.status !== "missing" && toggleSource(source.id)}
-                  disabled={source.status === "missing"}
-                  title={source.configPaths.join("\n")}
-                >
-                  <span className="source-icon">{source.name.slice(0, 2).toUpperCase()}</span>
-                  <span className="source-copy"><strong>{source.name}</strong><small>{source.status === "missing" ? "Not found" : `${source.bindings.length} bindings${source.warnings.length ? ` · ${source.warnings.length} warning` : ""}`}</small></span>
-                  <span className="source-toggle" aria-hidden="true"><span /></span>
-                </button>
-              );
-            })}
+            {groupedSources.map((group, groupIndex) => (
+              <div className="source-group" key={groupIndex}>
+                {group.map((source) => {
+                  const enabled = enabledSources.has(source.id);
+                  return (
+                    <button
+                      key={source.id}
+                      className={`source-card ${enabled ? "is-enabled" : ""} is-${source.status}`}
+                      style={{ "--source-color": sourceColor(source.id) } as CSSProperties}
+                      onClick={() => source.status !== "missing" && toggleSource(source.id)}
+                      disabled={source.status === "missing"}
+                      title={source.configPaths.join("\n")}
+                    >
+                      <span className="source-icon">{source.name.slice(0, 2).toUpperCase()}</span>
+                      <span className="source-copy"><strong>{source.name}</strong><small>{source.status === "missing" ? "Not found" : `${source.bindings.length} bindings${source.warnings.length ? ` · ${source.warnings.length} warning` : ""}`}</small></span>
+                      <span className="source-toggle" aria-hidden="true"><span /></span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </div>
           <div className="coming-soon">
             <span className="eyebrow">Scanner coverage</span>
