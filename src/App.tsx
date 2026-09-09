@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
@@ -31,6 +31,27 @@ type ScanResult = { sources: SourceScan[] };
 type KeyDef = { code: string; label: string; width?: number };
 
 const MODIFIER_ORDER = ["Super", "Ctrl", "Alt", "Shift"];
+const SOURCE_COLORS: Record<string, string> = {
+  hyprland: "#b6d96c",
+  kitty: "#e6a15a",
+  sxhkd: "#78b7c5",
+  tmux: "#b48bc8",
+  neovim: "#76b98d",
+  dwm: "#d98278",
+  dwl: "#779fda",
+};
+const sourceColor = (sourceId: string) => SOURCE_COLORS[sourceId] ?? "#9aa6b2";
+
+function sourceFill(bindings: Binding[]) {
+  const colors = [...new Set(bindings.map((binding) => sourceColor(binding.sourceId)))];
+  if (!colors.length) return "none";
+  if (colors.length === 1) return `linear-gradient(135deg, ${colors[0]}, ${colors[0]})`;
+  const stops = colors.flatMap((color, index) => [
+    `${color} ${(index / colors.length) * 100}%`,
+    `${color} ${((index + 1) / colors.length) * 100}%`,
+  ]);
+  return `linear-gradient(135deg, ${stops.join(", ")})`;
+}
 const key = (code: string, label = code, width = 1): KeyDef => ({ code, label, width });
 const KEYBOARD: KeyDef[][] = [
   [key("ESC", "Esc"), key("F1"), key("F2"), key("F3"), key("F4"), key("F5"), key("F6"), key("F7"), key("F8"), key("F9"), key("F10"), key("F11"), key("F12")],
@@ -110,6 +131,26 @@ function App() {
 
   useEffect(() => { void scan(); }, [scan]);
 
+  useEffect(() => {
+    const syncHeldModifiers = (event: KeyboardEvent) => {
+      setActiveModifiers([
+        event.metaKey ? "Super" : "",
+        event.ctrlKey ? "Ctrl" : "",
+        event.altKey ? "Alt" : "",
+        event.shiftKey ? "Shift" : "",
+      ].filter(Boolean));
+    };
+    const clearHeldModifiers = () => setActiveModifiers([]);
+    window.addEventListener("keydown", syncHeldModifiers);
+    window.addEventListener("keyup", syncHeldModifiers);
+    window.addEventListener("blur", clearHeldModifiers);
+    return () => {
+      window.removeEventListener("keydown", syncHeldModifiers);
+      window.removeEventListener("keyup", syncHeldModifiers);
+      window.removeEventListener("blur", clearHeldModifiers);
+    };
+  }, []);
+
   const selectedBindings = useMemo(
     () => sources.flatMap((source) => enabledSources.has(source.id) ? source.bindings : []),
     [sources, enabledSources],
@@ -181,6 +222,7 @@ function App() {
                 <button
                   key={source.id}
                   className={`source-card ${enabled ? "is-enabled" : ""} is-${source.status}`}
+                  style={{ "--source-color": sourceColor(source.id) } as CSSProperties}
                   onClick={() => source.status !== "missing" && toggleSource(source.id)}
                   disabled={source.status === "missing"}
                   title={source.configPaths.join("\n")}
@@ -193,8 +235,8 @@ function App() {
             })}
           </div>
           <div className="coming-soon">
-            <span className="eyebrow">Next adapters</span>
-            <p>Neovim · dwm · dwl · user-defined</p>
+            <span className="eyebrow">Scanner coverage</span>
+            <p>Hyprland · Kitty · sxhkd · tmux · Neovim · dwm · dwl</p>
           </div>
         </aside>
 
@@ -205,7 +247,7 @@ function App() {
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search actions, tools, or keys" />
               {query && <button onClick={() => setQuery("")} aria-label="Clear search">×</button>}
             </label>
-            <div className="modifier-bank" aria-label="Active modifiers">
+            <div className="modifier-bank" aria-label="Active modifiers" title="Hold modifier keys to preview their layer">
               {MODIFIER_ORDER.map((modifier) => (
                 <button key={modifier} className={activeModifiers.includes(modifier) ? "is-active" : ""} onClick={() => toggleModifier(modifier)}>{modifier}</button>
               ))}
@@ -228,11 +270,16 @@ function App() {
                 {row.map((keyDef) => {
                   const matches = bindingsFor(keyDef.code);
                   const state = matches.length > 1 ? "conflict" : matches.length === 1 ? "used" : "free";
+                  const accent = matches.length ? sourceColor(matches[0].sourceId) : "#59636d";
                   return (
                     <button
                       key={keyDef.code}
-                      className={`keycap is-${state} ${selectedKey === keyDef.code ? "is-selected" : ""}`}
-                      style={{ flex: keyDef.width ?? 1 }}
+                      className={`keycap is-${state} ${matches.length ? "has-bindings" : ""} ${selectedKey === keyDef.code ? "is-selected" : ""}`}
+                      style={{
+                        flex: keyDef.width ?? 1,
+                        "--source-color": accent,
+                        "--source-fill": sourceFill(matches),
+                      } as CSSProperties}
                       onClick={() => setSelectedKey(keyDef.code)}
                       title={matches.length ? matches.map((item) => `${item.sourceName}: ${item.action}`).join("\n") : "Available"}
                     >
@@ -256,8 +303,8 @@ function App() {
             <div className="detail-bindings">
               {detailBindings.map((binding) => (
                 <article key={binding.id}>
-                  <span className="binding-source">{binding.sourceName}</span>
-                  <div><strong>{binding.action}</strong><small>{binding.context} · {binding.sourceFile}:{binding.line}</small></div>
+                  <span className="binding-source" style={{ "--source-color": sourceColor(binding.sourceId) } as CSSProperties}>{binding.sourceName}</span>
+                  <div><strong>{binding.action}</strong><small>{binding.context} · {binding.sourceFile}{binding.line > 0 ? `:${binding.line}` : ""}</small></div>
                   <button disabled title="Round-trip editing is planned after parser validation">Edit soon</button>
                 </article>
               ))}
@@ -269,7 +316,7 @@ function App() {
               <span className="eyebrow">{visibleBindings.length} matching bindings</span>
               {visibleBindings.slice(0, 6).map((binding) => (
                 <button key={binding.id} onClick={() => { setActiveModifiers(binding.modifiers); setSelectedKey(binding.key); }}>
-                  <span>{binding.sourceName}</span><strong>{binding.action}</strong><kbd>{chordLabel(binding)}</kbd>
+                  <span style={{ "--source-color": sourceColor(binding.sourceId) } as CSSProperties}>{binding.sourceName}</span><strong>{binding.action}</strong><kbd>{chordLabel(binding)}</kbd>
                 </button>
               ))}
             </section>
