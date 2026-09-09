@@ -8,11 +8,14 @@ Keyventory is a Linux-first desktop app that inventories shortcut configuration,
 
 The first working slice can:
 
-- scan Hyprland configs, including variables and sourced files
+- scan live Hyprland bindings, including evaluated Omarchy defaults and personal Lua config
+- fall back to parsing classic Hyprland `.conf` variables and sourced files
 - scan Kitty configs, including `include` and `globinclude`
 - scan simple sxhkd bindings and tmux binding tables
-- toggle sources, combine modifier layers, search actions, and inspect source locations
-- distinguish free keys, assigned keys, and possible conflicts
+- scan mappings loaded by Neovim at startup
+- scan compiled-style `keys[]` tables and `TAGKEYS` macros in dwm and dwl configs
+- toggle sources, click or hold modifier layers, search actions, and inspect source locations
+- distinguish free keys, assigned keys, and possible conflicts with per-source colors
 
 Keyventory currently treats duplicate chords as **possible** conflicts. Scope and input precedence matter: two application-local bindings may coexist, while a compositor binding can intercept both. A later conflict engine will model those relationships explicitly.
 
@@ -37,6 +40,19 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
 Running `npm run dev` opens a browser preview with sample data. The Tauri app reads the real config files.
 
+## Local install
+
+Build the desktop executable and install it to `~/.local/bin/keyventory`:
+
+```sh
+make install
+keyventory
+```
+
+Override the destination with `make install PREFIX=/another/prefix`. The executable contains the frontend assets and does not need the repository after installation.
+
+Hyprland's live API is authoritative for Lua configurations, although Lua callback source locations and bodies are not exposed. Neovim is queried in headless mode, so mappings registered only after a lazy plugin event may not appear until a later adapter can introspect an existing editor process. dwm and dwl are discovered from `~/.config/<name>/` or `~/src/<name>/`, preferring `config.h` over `config.def.h`.
+
 ## Architecture
 
 - `src-tauri/src/scanner.rs`: source adapters and the normalized binding model
@@ -48,7 +64,7 @@ The Rust backend owns filesystem access. The webview receives normalized binding
 
 ## Planned adapters
 
-Neovim, dwm, dwl, i3/Sway, Zellij, Ghostty, and a documented adapter format for additional tools.
+i3/Sway, Zellij, Ghostty, and a documented adapter format for additional tools.
 
 ## Prior art
 
