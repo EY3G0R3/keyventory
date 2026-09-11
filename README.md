@@ -40,16 +40,21 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
 Running `npm run dev` opens a browser preview with sample data. The Tauri app reads the real config files.
 
-## Local install
+## Desktop install
 
-Build the desktop executable and install it to `~/.local/bin/keyventory`:
+Build the desktop executable and install it for the current user:
 
 ```sh
 make install
-keyventory
 ```
 
-Override the destination with `make install PREFIX=/another/prefix`. The executable contains the frontend assets and does not need the repository after installation.
+This installs the executable to `~/.local/bin/keyventory` and registers Keyventory
+with XDG-compatible application launchers, including Omarchy and Ubuntu. Launch it
+from the application menu or run `keyventory` in a terminal.
+
+Override the destination with `make install PREFIX=/another/prefix`. The selected
+prefix's `bin` directory must be on the desktop session's `PATH`. The executable
+contains the frontend assets and does not need the repository after installation.
 
 Hyprland's live API is authoritative for Lua configurations, although Lua callback source locations and bodies are not exposed. Neovim is queried in headless mode, so mappings registered only after a lazy plugin event may not appear until a later adapter can introspect an existing editor process. dwm and dwl are discovered from `~/.config/<name>/` or `~/src/<name>/`, preferring `config.h` over `config.def.h`.
 

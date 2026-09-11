@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Keyventory
+GenericName=Keyboard Shortcut Inventory
+Comment=See every keybinding, conflict, and open chord across your tools
+Exec=keyventory
+Icon=com.ey3g0r3.keyventory
+Terminal=false
+Categories=Utility;
+Keywords=keyboard;shortcuts;keybindings;hotkeys;
+StartupNotify=true
