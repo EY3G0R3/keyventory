@@ -1,3 +1,4 @@
+pub mod cli;
 mod scanner;
 
 #[tauri::command]

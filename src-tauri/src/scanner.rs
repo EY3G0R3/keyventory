@@ -1677,11 +1677,13 @@ fn parse_tmux_chord(raw: &str) -> (Vec<String>, String) {
     (modifiers, canonical_key(key))
 }
 
-fn parse_modifiers(raw: &str) -> Vec<String> {
+pub(crate) fn parse_modifiers(raw: &str) -> Vec<String> {
     let mut modifiers = raw
         .split_whitespace()
         .filter_map(|part| match part.trim().to_ascii_uppercase().as_str() {
-            "SUPER" | "META" | "MOD4" | "CMD" | "COMMAND" => Some("Super".to_string()),
+            "SUPER" | "META" | "MOD4" | "CMD" | "COMMAND" | "WIN" | "LOGO" => {
+                Some("Super".to_string())
+            }
             "CTRL" | "CONTROL" => Some("Ctrl".to_string()),
             "ALT" | "MOD1" | "OPT" | "OPTION" => Some("Alt".to_string()),
             "SHIFT" => Some("Shift".to_string()),
@@ -1703,7 +1705,7 @@ fn sort_modifiers(modifiers: &mut Vec<String>) {
     modifiers.dedup();
 }
 
-fn canonical_key(raw: &str) -> String {
+pub(crate) fn canonical_key(raw: &str) -> String {
     let key = raw.trim().trim_matches(['\'', '"']).to_ascii_uppercase();
     match key.as_str() {
         "RETURN" | "KP_ENTER" => "ENTER".into(),
