@@ -22,6 +22,7 @@ type SourceScan = {
   kind: string;
   scope: string;
   status: "ready" | "warning" | "empty" | "missing";
+  active: boolean;
   configPaths: string[];
   bindings: Binding[];
   warnings: string[];
@@ -71,7 +72,7 @@ const KEYBOARD: KeyDef[][] = [
 
 const demoSources: SourceScan[] = [
   {
-    id: "hyprland", name: "Hyprland", kind: "compositor", scope: "global", status: "ready",
+    id: "hyprland", name: "Hyprland", kind: "compositor", scope: "global", status: "ready", active: true,
     configPaths: ["~/.config/hypr/hyprland.conf"], warnings: [],
     bindings: [
       demoBinding("hyprland", "Hyprland", "global", ["Super"], "ENTER", "exec kitty", 42),
@@ -80,7 +81,7 @@ const demoSources: SourceScan[] = [
     ],
   },
   {
-    id: "kitty", name: "Kitty", kind: "terminal", scope: "application", status: "ready",
+    id: "kitty", name: "Kitty", kind: "terminal", scope: "application", status: "ready", active: true,
     configPaths: ["~/.config/kitty/kitty.conf"], warnings: [],
     bindings: [
       demoBinding("kitty", "Kitty", "application", ["Ctrl", "Shift"], "T", "new_tab", 16),
@@ -88,7 +89,7 @@ const demoSources: SourceScan[] = [
     ],
   },
   {
-    id: "tmux", name: "tmux", kind: "terminal multiplexer", scope: "application", status: "ready",
+    id: "tmux", name: "tmux", kind: "terminal multiplexer", scope: "application", status: "ready", active: true,
     configPaths: ["~/.tmux.conf"], warnings: [],
     bindings: [demoBinding("tmux", "tmux", "application", ["Ctrl", "Shift"], "T", "new-window", 11)],
   },
@@ -126,7 +127,7 @@ function App() {
       const inDesktop = "__TAURI_INTERNALS__" in window;
       const result = inDesktop ? await invoke<ScanResult>("scan_bindings") : { sources: demoSources };
       setSources(result.sources);
-      setEnabledSources(new Set(result.sources.filter((source) => source.status !== "missing").map((source) => source.id)));
+      setEnabledSources(new Set(result.sources.filter((source) => source.active).map((source) => source.id)));
       setIsDemo(!inDesktop);
     } catch (error) {
       setScanError(error instanceof Error ? error.message : String(error));
@@ -269,7 +270,7 @@ function App() {
                       title={source.configPaths.join("\n")}
                     >
                       <span className="source-icon">{source.name.slice(0, 2).toUpperCase()}</span>
-                      <span className="source-copy"><strong>{source.name}</strong><small>{source.status === "missing" ? "Not found" : `${source.bindings.length} bindings${source.warnings.length ? ` · ${source.warnings.length} warning` : ""}`}</small></span>
+                      <span className="source-copy"><strong>{source.name}</strong><small>{source.status === "missing" ? "Not found" : `${source.bindings.length} bindings${source.active ? "" : " · not running"}${source.warnings.length ? ` · ${source.warnings.length} warning` : ""}`}</small></span>
                       <span className="source-toggle" aria-hidden="true"><span /></span>
                     </button>
                   );
